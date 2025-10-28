@@ -7,44 +7,12 @@ from streamlit_folium import st_folium
 # Page Setup
 # -------------------------------
 st.set_page_config(layout="wide", page_title="Air Quality Live Advisor")
-st.markdown(
-    """
-    <style>
-    .main {
-        margin: 0;
-        padding: 0;
-    }
-    .stApp {
-        background-color: #000;
-    }
-    .overlay-box {
-        position: fixed;
-        top: 20px;
-        left: 20px;
-        background: rgba(0, 0, 0, 0.7);
-        padding: 20px;
-        border-radius: 12px;
-        z-index: 1000;
-        color: white;
-        width: 300px;
-    }
-    .overlay-title {
-        font-size: 22px;
-        font-weight: 700;
-        color: #00FFAA;
-        margin-bottom: 10px;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True
-)
 
 # -------------------------------
 # Helper Functions
 # -------------------------------
 def get_aqi_stations(city):
-    """Fetch AQI data for all stations in a given city from AQI.in API."""
-    url = f"https://www.aqi.in/dashboard/india/{city.replace(' ', '-').lower()}"
+    """Fetch AQI data for all stations in a given city from AQICN demo API."""
     api_url = f"https://api.waqi.info/search/?token=demo&keyword={city}"
     try:
         response = requests.get(api_url, timeout=10)
@@ -56,7 +24,7 @@ def get_aqi_stations(city):
     return []
 
 def classify_aqi(aqi):
-    """Classify AQI and return color and advisory."""
+    """Classify AQI and return color and category."""
     try:
         aqi = int(aqi)
     except:
@@ -89,15 +57,14 @@ def preventive_measures(category):
     return measures.get(category, "No data available.")
 
 # -------------------------------
-# UI: City Input Overlay
+# UI: City Dropdown
 # -------------------------------
-st.markdown("""
-<div class="overlay-box">
-    <div class="overlay-title">🌍 City Air Quality</div>
-</div>
-""", unsafe_allow_html=True)
-
-city = st.text_input("Enter City Name", "Nagpur")
+st.sidebar.title("🌍 Select City")
+city_list = [
+    "Delhi", "Mumbai", "Pune", "Nagpur", "Hyderabad",
+    "Bengaluru", "Chennai", "Kolkata", "Ahmedabad", "Jaipur", "Lucknow"
+]
+city = st.sidebar.selectbox("Choose a City", city_list, index=3)
 
 # -------------------------------
 # Fetch Data & Create Map
@@ -133,6 +100,6 @@ if stations:
         except Exception:
             continue
 
-    st_folium(m, width=1400, height=800)
+    st_folium(m, width=1500, height=820)
 else:
     st.warning("No AQI data available for this city. Try another name.")

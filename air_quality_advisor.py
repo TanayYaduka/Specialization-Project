@@ -7,9 +7,10 @@ import requests
 st.set_page_config(page_title="Air Quality Live Map", layout="wide")
 
 TOKEN = "8506c7ac77e67d10c3ac8f76550bf8b460cce195"
+
 CITIES = [
-    "delhi", "mumbai", "bangalore", "chennai", "kolkata", 
-    "hyderabad", "pune", "ahmedabad", "lucknow", "jaipur", 
+    "delhi", "mumbai", "bangalore", "chennai", "kolkata",
+    "hyderabad", "pune", "ahmedabad", "lucknow", "jaipur",
     "nagpur", "bhopal", "kanpur", "indore", "chandigarh"
 ]
 
@@ -39,26 +40,32 @@ def fetch_city_aqi(city):
     try:
         res = requests.get(url, timeout=8)
         data = res.json()
-        if data["status"] == "ok":
+        if data.get("status") == "ok":
             info = data["data"]
             aqi = info.get("aqi", "N/A")
-            lat, lon = info["city"]["geo"]
-            return {
-                "city": info["city"]["name"],
-                "lat": lat,
-                "lon": lon,
-                "aqi": aqi,
-            }
-    except Exception:
-        pass
+            if "city" in info and "geo" in info["city"]:
+                lat, lon = info["city"]["geo"]
+                return {
+                    "city": info["city"]["name"],
+                    "lat": lat,
+                    "lon": lon,
+                    "aqi": aqi,
+                }
+    except Exception as e:
+        print(f"Error fetching {city}: {e}")
     return None
 
 # ---------------- FETCH ALL ----------------
+st.markdown("## 🌍 Fetching live AQI data...")
 aqi_data = []
 for city in CITIES:
     info = fetch_city_aqi(city)
     if info:
         aqi_data.append(info)
+
+if not aqi_data:
+    st.error("No AQI data fetched. API might be temporarily unavailable.")
+    st.stop()
 
 # ---------------- BUILD MAP ----------------
 m = folium.Map(location=[22.9734, 78.6569], zoom_start=5, tiles="CartoDB positron")
@@ -78,30 +85,32 @@ for record in aqi_data:
         color="white",
         fill=True,
         fill_color=color,
-        fill_opacity=0.8,
-        popup=popup_html
+        fill_opacity=0.9,
+        popup=popup_html,
     ).add_to(m)
 
-# ---------------- RENDER FULLSCREEN MAP ----------------
+# ---------------- STYLE AND RENDER MAP ----------------
 st.markdown(
     """
     <style>
         .stApp {
             background-color: black;
-            padding: 0;
             margin: 0;
+            padding: 0;
         }
         iframe {
-            position: fixed !important;
-            top: 0 !important;
-            left: 0 !important;
             width: 100vw !important;
             height: 100vh !important;
             border: none !important;
+            position: absolute !important;
+            top: 0;
+            left: 0;
+            z-index: 0;
         }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-st_folium(m, width=None, height=None)
+# Render map (force full width/height)
+st_data = st_folium(m, width=2000, height=900)

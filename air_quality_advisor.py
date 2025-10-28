@@ -198,7 +198,7 @@ with st.spinner("Fetching station details (pollutants) — this may take a few s
 # Build folium map centered on average of stations coordinates
 mean_lat = sum([d["lat"] for d in detailed_list]) / len(detailed_list)
 mean_lon = sum([d["lon"] for d in detailed_list]) / len(detailed_list)
-m = folium.Map(location=[mean_lat, mean_lon], zoom_start=11, tiles="CartoDB positron")
+m = folium.Map(location=[mean_lat, mean_lon], zoom_start=11, tiles="CartoDB Dark_Matter")
 
 # Add marker cluster for cleanliness
 marker_cluster = MarkerCluster().add_to(m)

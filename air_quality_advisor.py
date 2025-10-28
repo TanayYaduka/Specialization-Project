@@ -1,117 +1,174 @@
 import streamlit as st
-import folium
-from streamlit_folium import st_folium
 import requests
+import pandas as pd
 
-st.set_page_config(page_title="🌍 Air Quality Advisor", layout="wide")
-st.title("🌍 Air Quality Advisor")
+# ----------------------------
+# CONFIG
+# ----------------------------
+st.set_page_config(page_title="🌍 Air Quality and Health Advisor", layout="wide")
+TOKEN = "8506c7ac77e67d10c3ac8f76550bf8b460cce195"
 
-# --- Dropdown for City ---
-city = st.selectbox(
-    "Select a City",
-    ["Delhi", "Mumbai", "Chennai", "Kolkata", "Bengaluru", "Hyderabad"]
-)
+# Predefined cities (you can expand if needed)
+CITIES = [
+    "Delhi", "Mumbai", "Bangalore", "Kolkata", "Chennai",
+    "Hyderabad", "Ahmedabad", "Pune", "Jaipur", "Lucknow",
+    "Chandigarh", "Bhopal", "Patna", "Guwahati", "Nagpur"
+]
 
-# --- Known coordinates fallback (approx city centers) ---
-CITY_COORDS = {
-    "Delhi": (28.6139, 77.2090),
-    "Mumbai": (19.0760, 72.8777),
-    "Chennai": (13.0827, 80.2707),
-    "Kolkata": (22.5726, 88.3639),
-    "Bengaluru": (12.9716, 77.5946),
-    "Hyderabad": (17.3850, 78.4867)
+# WHO Limits
+WHO_LIMITS = {
+    "pm25": 15,
+    "pm10": 45,
+    "no2": 25,
+    "so2": 40,
+    "o3": 100
 }
 
-# --- Try to fetch coordinates dynamically ---
-def get_city_coords(city):
-    try:
-        url = f"https://nominatim.openstreetmap.org/search?q={city},India&format=json&limit=1"
-        resp = requests.get(url, headers={"User-Agent": "Streamlit AQI App"}, timeout=10)
-        data = resp.json()
-        if len(data) > 0:
-            return float(data[0]["lat"]), float(data[0]["lon"])
-    except Exception as e:
-        st.warning(f"⚠️ Error fetching coordinates for {city}: {e}")
-    # fallback to predefined coordinates
-    st.info(f"Using fallback coordinates for {city}.")
-    return CITY_COORDS[city]
+# Health Measures
+HEALTH_MEASURES = {
+    "pm25": [
+        "Wear an N95 or P95 mask outdoors.",
+        "Keep windows closed and use HEPA air purifiers indoors.",
+        "Avoid outdoor exercise during peak pollution hours."
+    ],
+    "pm10": [
+        "Avoid construction-heavy or high-traffic zones.",
+        "Stay indoors if visibility appears poor.",
+        "Use a respirator mask when dust is high."
+    ],
+    "o3": [
+        "Limit outdoor activities during mid-day or afternoon.",
+        "Avoid gas-powered lawn equipment.",
+        "If asthma worsens, stay indoors."
+    ],
+    "no2": [
+        "Avoid high-traffic or industrial areas.",
+        "Ventilate rooms with clean air sources.",
+        "Use indoor plants that absorb nitrogen dioxide."
+    ],
+    "so2": [
+        "Stay away from industrial or burning zones.",
+        "Avoid outdoor exertion when throat irritation occurs.",
+        "Use air purifiers if SO₂ levels are elevated."
+    ]
+}
 
-# --- Fetch multiple AQI stations from WAQI ---
-def get_aqi_stations(city):
-    lat, lon = get_city_coords(city)
-    if not lat or not lon:
-        st.error("Could not find city coordinates.")
-        return []
+# ----------------------------
+# STYLES
+# ----------------------------
+st.markdown(
+    """
+    <style>
+    body {
+        background-color: black;
+        color: white;
+    }
+    .main {
+        background-image: none;
+        background-color: transparent;
+    }
+    div[data-testid="stVerticalBlock"] {
+        background: rgba(0,0,0,0.55);
+        padding: 1.5em;
+        border-radius: 15px;
+        color: white;
+    }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
-    # Define a bounding box around city (approx 0.4° range)
-    min_lat, max_lat = lat - 0.2, lat + 0.2
-    min_lon, max_lon = lon - 0.2, lon + 0.2
-    api_url = f"https://api.waqi.info/map/bounds/?token=YOUR_API_KEY&latlng={min_lat},{min_lon},{max_lat},{max_lon}"
+# ----------------------------
+# FUNCTIONS
+# ----------------------------
+def fetch_aqi_data(city):
+    """Fetch AQI data from WAQI API for the given city."""
+    url = f"http://api.waqi.info/feed/{city}/?token={TOKEN}"
+    response = requests.get(url)
+    data = response.json()
 
-    try:
-        resp = requests.get(api_url, timeout=10)
-        data = resp.json()
-        if data.get("status") == "ok":
-            return data.get("data", [])
-        else:
-            st.warning("⚠️ No AQI data available for this area.")
-    except Exception as e:
-        st.warning(f"Failed to fetch AQI data for {city}: {e}")
-    return []
-
-# --- Health advisory helper ---
-def get_advisory(aqi):
-    try:
-        aqi = int(aqi)
-    except:
-        return "Maintain general air quality precautions."
-    if aqi <= 50:
-        return "Good – air quality is satisfactory."
-    elif aqi <= 100:
-        return "Moderate – acceptable, but some pollutants may be concerning."
-    elif aqi <= 150:
-        return "Unhealthy for sensitive groups – limit outdoor activity."
-    elif aqi <= 200:
-        return "Unhealthy – everyone should reduce outdoor exertion."
-    elif aqi <= 300:
-        return "Very Unhealthy – avoid outdoor activities."
+    if data.get("status") == "ok":
+        aqi = data["data"]["aqi"]
+        pollutants = {k.lower(): v["v"] for k, v in data["data"].get("iaqi", {}).items()}
+        lat, lon = data["data"]["city"]["geo"]
+        return {"city": city, "aqi": aqi, "pollutants": pollutants, "lat": lat, "lon": lon}
     else:
-        return "Hazardous – stay indoors and use air purifiers."
+        return None
 
-# --- Build Map ---
-stations = get_aqi_stations(city)
 
-if stations:
-    m = folium.Map(location=[stations[0]["lat"], stations[0]["lon"]], zoom_start=11, tiles="CartoDB positron")
+def classify_aqi(aqi):
+    if aqi <= 50:
+        return "Good", "🟢"
+    elif aqi <= 100:
+        return "Moderate", "🟡"
+    elif aqi <= 150:
+        return "Unhealthy for Sensitive Groups", "🟠"
+    elif aqi <= 200:
+        return "Unhealthy", "🔴"
+    elif aqi <= 300:
+        return "Very Unhealthy", "🟣"
+    else:
+        return "Hazardous", "⚫"
 
-    for s in stations:
-        name = s.get("station", {}).get("name", "Unknown Station")
-        aqi = s.get("aqi", "N/A")
-        lat, lon = s["lat"], s["lon"]
 
-        popup_text = f"<b>{name}</b><br>AQI: {aqi}<br><b>Advisory:</b> {get_advisory(aqi)}"
-        try:
-            aqi_val = int(aqi)
-            color = (
-                "#00e400" if aqi_val <= 50 else
-                "#ffff00" if aqi_val <= 100 else
-                "#ff7e00" if aqi_val <= 150 else
-                "#ff0000" if aqi_val <= 200 else
-                "#8f3f97" if aqi_val <= 300 else
-                "#7e0023"
-            )
-        except:
-            color = "#888888"
+# ----------------------------
+# UI
+# ----------------------------
+st.title("🌍 Real-Time Air Quality and Health Advisor")
 
-        folium.CircleMarker(
-            location=[lat, lon],
-            radius=8,
-            color=color,
-            fill=True,
-            fill_opacity=0.7,
-            popup=folium.Popup(popup_text, max_width=300)
-        ).add_to(m)
+city = st.selectbox("Select a City", CITIES, index=0)
+st.write(f"Fetching real-time AQI data for **{city}**...")
 
-    st_folium(m, width=1200, height=600)
+data = fetch_aqi_data(city)
+
+if not data:
+    st.error("Could not fetch AQI data for this city. Try another one.")
+    st.stop()
+
+aqi = data["aqi"]
+pollutants = data["pollutants"]
+lat, lon = data["lat"], data["lon"]
+
+desc, emoji = classify_aqi(aqi)
+st.metric(label="Current AQI", value=f"{aqi}", delta=f"{emoji} {desc}")
+
+# ----------------------------
+# WHO Guideline Comparison
+# ----------------------------
+exceeding = {}
+for pollutant, value in pollutants.items():
+    limit = WHO_LIMITS.get(pollutant)
+    if limit and value > limit:
+        exceeding[pollutant] = round(((value - limit) / limit) * 100, 1)
+
+if exceeding:
+    high_pollutant = max(exceeding, key=exceeding.get)
+    st.warning(f"⚠️ {high_pollutant.upper()} exceeds WHO limit by {exceeding[high_pollutant]}%.")
 else:
-    st.warning("No monitoring stations found for this city.")
+    st.success("✅ All pollutants are within WHO safe limits.")
+
+# ----------------------------
+# Health Recommendations
+# ----------------------------
+st.subheader("💡 Actionable Health Measures")
+if exceeding:
+    st.write(f"**Primary High Pollutant:** {high_pollutant.upper()}")
+    for measure in HEALTH_MEASURES.get(high_pollutant, []):
+        st.markdown(f"- {measure}")
+else:
+    st.write("Air quality is good. Continue your outdoor activities safely!")
+
+# ----------------------------
+# Pollutant Table
+# ----------------------------
+st.subheader("🧪 Pollutant Breakdown")
+pollutant_df = pd.DataFrame(
+    [{"Pollutant": k.upper(), "Value": v, "WHO Limit": WHO_LIMITS.get(k, "N/A")} for k, v in pollutants.items()]
+)
+st.dataframe(pollutant_df, use_container_width=True)
+
+# ----------------------------
+# MAP
+# ----------------------------
+st.subheader("🗺️ Location Map")
+st.map(pd.DataFrame({"lat": [lat], "lon": [lon]}))

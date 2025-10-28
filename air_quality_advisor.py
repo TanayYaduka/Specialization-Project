@@ -51,8 +51,11 @@ def get_station_details(city):
 
 def classify_aqi(aqi):
     """Return description and color for AQI level."""
-    if aqi is None:
+    try:
+        aqi = int(aqi)
+    except (ValueError, TypeError):
         return "No Data", "#808080"
+
     if aqi <= 50:
         return "Good", "#009966"
     elif aqi <= 100:
@@ -65,6 +68,7 @@ def classify_aqi(aqi):
         return "Very Unhealthy", "#660099"
     else:
         return "Hazardous", "#7e0023"
+
 
 
 def health_tips(pollutants):

@@ -1,126 +1,66 @@
 import streamlit as st
+import requests
 import pandas as pd
 import folium
 from streamlit_folium import st_folium
 
 # ----------------------------
-# Simulated AQI Fetch Function
+# Streamlit Config
 # ----------------------------
-def fetch_aqi_data(latitude, longitude):
-    return {
-        "aqi": 132,
-        "lat": latitude,
-        "lon": longitude,
-        "pollutants": {
-            "PM2.5": 65,
-            "PM10": 78,
-            "O3": 85,
-            "NO2": 22,
-            "SO2": 15,
-            "CO": 600
-        },
+st.set_page_config(page_title="🌍 Real-Time Air Quality Advisor", layout="wide")
+
+# ----------------------------
+# API Configuration
+# ----------------------------
+API_KEY = "579b464db66ec23bdd00000146ebd672b8dc438158b221a05b4f40b6"
+INDEX_ID = "3b01bcb8-0b14-4abf-b6f2-c1bfd384ba69"
+BASE_URL = f"https://api.data.gov.in/resource/{INDEX_ID}"
+
+# ----------------------------
+# Helper Functions
+# ----------------------------
+def fetch_available_cities(limit=20):
+    """Fetch list of available cities from API."""
+    params = {
+        "api-key": API_KEY,
+        "format": "json",
+        "limit": limit
     }
+    try:
+        res = requests.get(BASE_URL, params=params, timeout=10)
+        data = res.json()
+        df = pd.DataFrame(data.get("records", []))
+        if "city" in df.columns:
+            return sorted(df["city"].dropna().unique().tolist())
+        else:
+            return ["Delhi"]
+    except Exception as e:
+        st.error(f"Error fetching cities: {e}")
+        return ["Delhi"]
 
-# ----------------------------
-# WHO 2021 Air Quality Limits
-# ----------------------------
-WHO_LIMITS = {
-    "PM2.5": 15,
-    "PM10": 45,
-    "NO2": 25,
-    "SO2": 40,
-    "O3": 100
-}
-
-# ----------------------------
-# Health Measures
-# ----------------------------
-HEALTH_MEASURES = {
-    "PM2.5": [
-        "Wear an N95 or P95 mask outdoors.",
-        "Keep windows closed and use HEPA air purifiers indoors.",
-        "Avoid outdoor exercise during peak pollution hours."
-    ],
-    "PM10": [
-        "Wear a mask outdoors to reduce inhalation of dust particles.",
-        "Avoid construction-heavy or high-traffic zones.",
-        "Stay indoors if visibility appears poor."
-    ],
-    "O3": [
-        "Limit outdoor activities during mid-day or afternoon.",
-        "If respiratory symptoms worsen, stay indoors.",
-        "Avoid gas-powered lawn equipment."
-    ],
-    "NO2": [
-        "Avoid high-traffic roads or industrial areas.",
-        "Ensure good indoor ventilation without drawing outdoor air.",
-        "Use indoor plants that help absorb nitrogen dioxide."
-    ],
-    "SO2": [
-        "Stay away from industrial or burning zones.",
-        "If you experience throat irritation, stay indoors.",
-        "Avoid outdoor physical exertion during high SO₂ periods."
-    ]
-}
-
-# ----------------------------
-# Streamlit Page Setup
-# ----------------------------
-st.set_page_config(page_title="🌍 Air Quality and Health Advisor", layout="wide")
-
-# Custom CSS for transparent overlay boxes
-st.markdown("""
-    <style>
-    .main {
-        background-color: transparent !important;
+def fetch_city_data(city_name):
+    """Fetch real-time pollutant data for a city from API."""
+    params = {
+        "api-key": API_KEY,
+        "format": "json",
+        "limit": 100
     }
-    div[data-testid="stSidebar"] {
-        background: rgba(0, 0, 0, 0.6);
-        color: white;
-    }
-    div.block-container {
-        background: rgba(0, 0, 0, 0.6);
-        color: white;
-        border-radius: 15px;
-        padding: 20px;
-    }
-    h1, h2, h3, label, p, div, span {
-        color: white !important;
-    }
-    input, select, textarea {
-        background-color: rgba(30, 30, 30, 0.8) !important;
-        color: white !important;
-        border-radius: 10px !important;
-        border: 1px solid #555 !important;
-    }
-    </style>
-""", unsafe_allow_html=True)
+    res = requests.get(BASE_URL, params=params)
+    data = res.json()
+    records = data.get("records", [])
+    df = pd.DataFrame(records)
+    if "city" not in df.columns:
+        st.error("City data not available in API response.")
+        return None
 
-# ----------------------------
-# City Input
-# ----------------------------
-st.markdown("<h1 style='text-align:center;'>🌍 Air Quality & Health Advisor</h1>", unsafe_allow_html=True)
-st.write("Enter your city to check AQI and recommended health measures.")
+    df_city = df[df["city"].str.lower() == city_name.lower()]
+    if df_city.empty:
+        st.warning("No records found for selected city.")
+        return None
 
-default_city = "New Delhi"
-city = st.text_input("Enter City Name:", default_city)
+    return df_city
 
-geo_data = {
-    "New Delhi": (28.6139, 77.2090),
-    "Mumbai": (19.0760, 72.8777),
-    "Bangalore": (12.9716, 77.5946),
-    "Kolkata": (22.5726, 88.3639),
-    "Chennai": (13.0827, 80.2707)
-}
-latitude, longitude = geo_data.get(city.title(), (28.6139, 77.2090))
-
-# ----------------------------
-# AQI Data
-# ----------------------------
-data = fetch_aqi_data(latitude, longitude)
-aqi = data["aqi"]
-pollutants = data["pollutants"]
-
+# AQI category classifier
 def classify_aqi(aqi):
     if aqi <= 50:
         return "Good", "🟢"
@@ -135,48 +75,108 @@ def classify_aqi(aqi):
     else:
         return "Hazardous", "⚫"
 
-desc, emoji = classify_aqi(aqi)
-
-st.markdown(f"<h2 style='text-align:center;'>Current AQI: {aqi} {emoji} ({desc})</h2>", unsafe_allow_html=True)
-
-# ----------------------------
-# WHO Comparison
-# ----------------------------
-exceeding = {}
-for pollutant, value in pollutants.items():
-    limit = WHO_LIMITS.get(pollutant)
-    if limit and value > limit:
-        exceeding[pollutant] = round(((value - limit) / limit) * 100, 2)
-
-if exceeding:
-    high_pollutant = max(exceeding, key=exceeding.get)
-    st.warning(f"⚠️ {high_pollutant} exceeds WHO limit by {exceeding[high_pollutant]}%.")
-else:
-    st.success("✅ All pollutants are within WHO limits.")
+# WHO standards
+WHO_LIMITS = {"PM2.5": 15, "PM10": 45, "NO2": 25, "SO2": 40, "O3": 100}
 
 # ----------------------------
-# Health Measures
+# Styling
 # ----------------------------
-st.markdown("### 💡 Recommended Health Measures")
-if exceeding:
-    st.write(f"**Primary Pollutant:** {high_pollutant}")
-    for m in HEALTH_MEASURES.get(high_pollutant, []):
-        st.markdown(f"- {m}")
-else:
-    st.write("Air quality is safe for outdoor activities.")
+st.markdown("""
+<style>
+html, body, [class*="css"] {
+    background-color: #000 !important;
+    color: white !important;
+}
+.overlay-box {
+    position: absolute;
+    background: rgba(0,0,0,0.65);
+    color: white;
+    padding: 20px;
+    border-radius: 12px;
+    z-index: 9999;
+    width: 300px;
+    font-size: 16px;
+    backdrop-filter: blur(6px);
+}
+#box1 { top: 20px; left: 20px; }
+#box2 { bottom: 20px; left: 20px; }
+#box3 { top: 20px; right: 20px; }
+</style>
+""", unsafe_allow_html=True)
 
 # ----------------------------
-# Map Visualization
+# UI – City Selection
 # ----------------------------
-m = folium.Map(location=[latitude, longitude], zoom_start=6, tiles="CartoDB dark_matter")
-folium.Marker([latitude, longitude], popup=f"{city}", tooltip=f"{city} - AQI {aqi}").add_to(m)
-st_data = st_folium(m, width=1500, height=700)
+st.title("🌍 Real-Time Air Quality & Health Dashboard")
+st.write("Get real-time AQI insights based on WHO standards.")
 
-# ----------------------------
-# Pollutant Breakdown
-# ----------------------------
-pollutant_df = pd.DataFrame(
-    [{"Pollutant": k, "Concentration": v, "WHO Limit": WHO_LIMITS.get(k, 'N/A')} for k, v in pollutants.items()]
-)
-st.markdown("### 🧪 Pollutant Breakdown")
-st.dataframe(pollutant_df, use_container_width=True)
+city_list = fetch_available_cities()
+selected_city = st.selectbox("🏙️ Select City", city_list)
+
+df_city = fetch_city_data(selected_city)
+if df_city is not None:
+    # Extract pollutant data
+    df_city["avg_value"] = pd.to_numeric(df_city["avg_value"], errors="coerce")
+    pollutants = df_city.groupby("pollutant_id")["avg_value"].mean().to_dict()
+
+    # Estimate AQI (average of normalized pollutant percentages)
+    aqi = int(sum(pollutants.values()) / len(pollutants)) if pollutants else 0
+    desc, emoji = classify_aqi(aqi)
+
+    # Default coordinates (can improve by adding lat/lon from API if available)
+    city_coords = {
+        "Delhi": (28.6139, 77.2090),
+        "Mumbai": (19.0760, 72.8777),
+        "Kolkata": (22.5726, 88.3639),
+        "Bangalore": (12.9716, 77.5946),
+        "Chennai": (13.0827, 80.2707)
+    }
+    lat, lon = city_coords.get(selected_city, (20.5937, 78.9629))
+
+    # Map
+    m = folium.Map(location=[lat, lon], zoom_start=6, tiles="CartoDB dark_matter")
+    folium.Marker([lat, lon], popup=f"{selected_city} - AQI {aqi}", tooltip=selected_city).add_to(m)
+    st_data = st_folium(m, width=1500, height=800)
+
+    # WHO comparison
+    exceeding = {
+        p: round(((v - WHO_LIMITS[p]) / WHO_LIMITS[p]) * 100, 2)
+        for p, v in pollutants.items() if p in WHO_LIMITS and v > WHO_LIMITS[p]
+    }
+    high_pollutant = max(exceeding, key=exceeding.get) if exceeding else None
+
+    # Overlay boxes
+    box1 = f"""
+    <div id="box1" class="overlay-box">
+        <h3>{selected_city}</h3>
+        <h4>{emoji} AQI: {aqi} ({desc})</h4>
+    </div>
+    """
+
+    if high_pollutant:
+        box2 = f"""
+        <div id="box2" class="overlay-box">
+            <b>⚠️ Dominant Pollutant:</b> {high_pollutant}<br>
+            Exceeds WHO limit by {exceeding[high_pollutant]}%<br><br>
+            <b>Health Tips:</b><br>
+            • Wear a mask outdoors<br>
+            • Use indoor air purifiers<br>
+            • Limit strenuous outdoor activities
+        </div>
+        """
+    else:
+        box2 = """
+        <div id="box2" class="overlay-box">
+            ✅ Air quality is within WHO safe limits.<br>
+            Safe for outdoor activities.
+        </div>
+        """
+
+    box3 = f"""
+    <div id="box3" class="overlay-box">
+        <b>Pollutant Levels (µg/m³)</b><br>
+        {"<br>".join([f"{p}: {round(v,2)}" for p, v in pollutants.items()])}
+    </div>
+    """
+
+    st.markdown(box1 + box2 + box3, unsafe_allow_html=True)

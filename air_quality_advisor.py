@@ -11,7 +11,7 @@ st.set_page_config(page_title="Air Quality Live Advisor", layout="wide")
 # ---------------------------------
 # AQI API Configuration
 # ---------------------------------
-API_TOKEN = "demo"  # Replace with your AQICN token for better limits
+API_TOKEN = "demo"  # Replace with your real AQICN token
 SEARCH_URL = "https://api.waqi.info/search/"
 FEED_URL = "https://api.waqi.info/feed/"
 
@@ -19,23 +19,23 @@ FEED_URL = "https://api.waqi.info/feed/"
 # Helper Functions
 # ---------------------------------
 def get_aqi_stations(city):
-    """Fetch all AQI stations for a city."""
+    """Fetch all AQI stations for a given city."""
     try:
-        response = requests.get(f"{SEARCH_URL}?token={API_TOKEN}&keyword={city}", timeout=10)
-        data = response.json()
-        if "data" in data:
-            return data["data"]
+        r = requests.get(f"{SEARCH_URL}?token={API_TOKEN}&keyword={city}", timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        return data.get("data", [])
     except Exception as e:
-        st.error(f"Error fetching stations: {e}")
-    return []
+        st.error(f"Error fetching stations for {city}: {e}")
+        return []
 
 
-def get_station_data(station_uid):
-    """Fetch detailed pollutant data for a single station."""
+def get_station_data(uid):
+    """Fetch detailed data for a specific station."""
     try:
-        url = f"{FEED_URL}@{station_uid}/?token={API_TOKEN}"
-        response = requests.get(url, timeout=10)
-        data = response.json()
+        r = requests.get(f"{FEED_URL}@{uid}/?token={API_TOKEN}", timeout=10)
+        r.raise_for_status()
+        data = r.json()
         if data.get("status") == "ok":
             return data["data"]
     except Exception:
@@ -44,7 +44,7 @@ def get_station_data(station_uid):
 
 
 def classify_aqi(aqi):
-    """Classify AQI category and marker color."""
+    """Classify AQI level and assign color."""
     try:
         aqi = int(aqi)
     except:
@@ -64,57 +64,58 @@ def classify_aqi(aqi):
 
 
 def preventive_measures(category):
-    """Return preventive measures based on AQI category."""
-    measures = {
-        "Good": "Air quality is good. Enjoy outdoor activities.",
-        "Moderate": "Air quality is acceptable; sensitive individuals should avoid prolonged exposure.",
-        "Unhealthy for Sensitive Groups": "Avoid long outdoor stays; use a mask if needed.",
-        "Unhealthy": "Reduce outdoor activity; use air purifiers indoors.",
-        "Very Unhealthy": "Limit outdoor exposure strictly; use N95 masks.",
-        "Hazardous": "Stay indoors; avoid any outdoor activity; keep windows closed.",
+    """Preventive measures text."""
+    return {
+        "Good": "Enjoy outdoor activities.",
+        "Moderate": "Sensitive people should limit long outdoor exposure.",
+        "Unhealthy for Sensitive Groups": "Avoid prolonged outdoor activity; wear a mask.",
+        "Unhealthy": "Reduce outdoor activity; use air purifier indoors.",
+        "Very Unhealthy": "Stay indoors; use N95 mask when outside.",
+        "Hazardous": "Avoid going outdoors completely; keep windows closed.",
         "Unknown": "No data available."
-    }
-    return measures.get(category, "No advice available.")
-
+    }.get(category, "No advice available.")
 
 # ---------------------------------
-# UI: City Selection
+# Sidebar City Selector
 # ---------------------------------
 st.sidebar.title("🌆 City Selection")
 city_list = [
     "Delhi", "Mumbai", "Pune", "Nagpur", "Hyderabad",
     "Bengaluru", "Chennai", "Kolkata", "Ahmedabad", "Jaipur", "Lucknow"
 ]
-city = st.sidebar.selectbox("Select a city", city_list, index=3)
-st.sidebar.info("Map updates automatically when you change the city.")
+city = st.sidebar.selectbox("Select City", city_list, index=3)
+
+# Rerun the script completely when a new city is selected
+if "selected_city" not in st.session_state or st.session_state.selected_city != city:
+    st.session_state.selected_city = city
+    st.experimental_rerun()
 
 # ---------------------------------
-# Fetch AQI Data
+# Fetch Live Data
 # ---------------------------------
 stations = get_aqi_stations(city)
-
 if not stations:
-    st.warning("No AQI monitoring data available for this city.")
+    st.warning(f"No AQI monitoring stations found for {city}.")
     st.stop()
 
 # Center map on first station
 city_lat = stations[0]["station"]["geo"][0]
 city_lon = stations[0]["station"]["geo"][1]
 
-# Initialize map
+# Rebuild map from scratch each time
 m = folium.Map(location=[city_lat, city_lon], zoom_start=11, tiles="CartoDB dark_matter")
 
 # ---------------------------------
-# Add Markers for Each Station
+# Add Markers
 # ---------------------------------
 for s in stations:
     try:
-        station_name = s["station"]["name"]
+        name = s["station"]["name"]
         lat, lon = s["station"]["geo"]
         aqi_val = s.get("aqi", "N/A")
         color, category = classify_aqi(aqi_val)
 
-        # Get pollutant details
+        # Pollutant details
         station_data = get_station_data(s["uid"])
         pollutants_html = ""
         if station_data and "iaqi" in station_data:
@@ -127,15 +128,16 @@ for s in stations:
                 "NO₂": iaqi.get("no2", {}).get("v"),
                 "O₃": iaqi.get("o3", {}).get("v")
             }
-            pollutants_html = "<b>Pollutant Levels:</b><br>" + "<br>".join(
-                [f"{p}: {v if v is not None else 'N/A'} µg/m³" for p, v in pollutants.items()]
+            pollutants_html = "<b>Pollutants:</b><br>" + "<br>".join(
+                [f"{k}: {v if v is not None else 'N/A'} µg/m³" for k, v in pollutants.items()]
             )
 
+        # Health Advisory
         measure = preventive_measures(category)
 
         popup_html = f"""
-        <div style='width: 240px; font-size: 13px;'>
-            <b>{station_name}</b><br>
+        <div style='width:240px; font-size:13px;'>
+            <b>{name}</b><br>
             <b>AQI:</b> {aqi_val} ({category})<br><br>
             {pollutants_html}<br><br>
             <b>Health Advisory:</b><br>{measure}
@@ -156,4 +158,5 @@ for s in stations:
 # ---------------------------------
 # Display Map
 # ---------------------------------
+st.markdown(f"### 🌍 Air Quality Monitoring in {city}")
 st_folium(m, width=1500, height=820)

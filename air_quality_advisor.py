@@ -88,7 +88,6 @@ city = st.sidebar.selectbox("Select City", city_list, index=3)
 # Rerun the script completely when a new city is selected
 if "selected_city" not in st.session_state or st.session_state.selected_city != city:
     st.session_state.selected_city = city
-    st.experimental_rerun()
 
 # ---------------------------------
 # Fetch Live Data

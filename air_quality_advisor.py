@@ -1,15 +1,13 @@
 import streamlit as st
-import requests
 import pandas as pd
+import folium
+from streamlit_folium import st_folium
 
 # ----------------------------
 # Simulated AQI Fetch Function
 # ----------------------------
 def fetch_aqi_data(latitude, longitude):
-    """
-    Simulates fetching AQI and pollutant data for a given lat/lon.
-    Replace this logic later with your real API integration.
-    """
+    """Simulates fetching AQI and pollutant data for a given lat/lon."""
     return {
         "aqi": 132,
         "lat": latitude,
@@ -67,21 +65,62 @@ HEALTH_MEASURES = {
 }
 
 # ----------------------------
-# Streamlit App Layout
+# Page Config
 # ----------------------------
-st.set_page_config(page_title="Air Quality and Health Advisor", layout="wide")
-st.title("🌍 Air Quality and Health Advisor")
+st.set_page_config(page_title="Air Quality & Health Advisor", layout="wide")
 
-st.write("Check real-time Air Quality Index (AQI) and health measures based on WHO guidelines.")
+# Custom CSS for translucent layout
+st.markdown("""
+<style>
+html, body, [class*="css"] {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    width: 100%;
+}
+div.block-container {
+    padding: 0;
+}
+.map-container {
+    position: fixed;
+    top: 0; left: 0;
+    height: 100vh;
+    width: 100vw;
+    z-index: 0;
+}
+.overlay-box {
+    position: fixed;
+    top: 5%;
+    left: 5%;
+    width: 30%;
+    background: rgba(255, 255, 255, 0.75);
+    backdrop-filter: blur(12px);
+    border-radius: 15px;
+    box-shadow: 0px 4px 12px rgba(0,0,0,0.3);
+    padding: 25px;
+    z-index: 10;
+}
+.overlay-right {
+    position: fixed;
+    top: 5%;
+    right: 5%;
+    width: 30%;
+    background: rgba(255, 255, 255, 0.75);
+    backdrop-filter: blur(12px);
+    border-radius: 15px;
+    box-shadow: 0px 4px 12px rgba(0,0,0,0.3);
+    padding: 25px;
+    z-index: 10;
+}
+h1, h2, h3 {
+    color: #222;
+}
+</style>
+""", unsafe_allow_html=True)
 
 # ----------------------------
-# Location Input
+# Map Setup
 # ----------------------------
-default_city = "New Delhi"
-city = st.text_input("Enter City Name:", default_city)
-
-# Simulate geolocation (you can integrate geopy/geocoding later)
-# Here we use predefined coordinates for simplicity
 geo_data = {
     "New Delhi": (28.6139, 77.2090),
     "Mumbai": (19.0760, 72.8777),
@@ -89,19 +128,25 @@ geo_data = {
     "Kolkata": (22.5726, 88.3639),
     "Chennai": (13.0827, 80.2707)
 }
-latitude, longitude = geo_data.get(city.title(), (28.6139, 77.2090))
+
+# Default values
+default_city = "New Delhi"
+city = st.text_input("Enter City Name", default_city).title()
+latitude, longitude = geo_data.get(city, geo_data["New Delhi"])
+
+# Generate map
+m = folium.Map(location=[latitude, longitude], zoom_start=10)
+folium.Marker([latitude, longitude], popup=f"{city}").add_to(m)
+map_html = st_folium(m, width=1400, height=700)
 
 # ----------------------------
 # Fetch AQI Data
 # ----------------------------
-st.subheader("📡 Fetching AQI Data")
 data = fetch_aqi_data(latitude, longitude)
 aqi = data["aqi"]
 pollutants = data["pollutants"]
 
-# ----------------------------
-# AQI Level Classification
-# ----------------------------
+# AQI classification
 def classify_aqi(aqi):
     if aqi <= 50:
         return "Good", "🟢"
@@ -118,47 +163,59 @@ def classify_aqi(aqi):
 
 desc, emoji = classify_aqi(aqi)
 
-st.metric(label="Current AQI", value=f"{aqi}", delta=f"{emoji} {desc}")
-
-# ----------------------------
-# WHO Guideline Comparison
-# ----------------------------
-st.subheader("📊 WHO Guideline Comparison")
-
+# WHO comparison
 exceeding = {}
 for pollutant, value in pollutants.items():
     limit = WHO_LIMITS.get(pollutant)
     if limit and value > limit:
         exceeding[pollutant] = round(((value - limit) / limit) * 100, 2)
 
+# Determine high pollutant
 if exceeding:
     high_pollutant = max(exceeding, key=exceeding.get)
-    st.warning(f"⚠️ {high_pollutant} levels exceed WHO limits by {exceeding[high_pollutant]}%.")
 else:
-    st.success("✅ All pollutants are within WHO safe limits.")
+    high_pollutant = None
 
 # ----------------------------
-# Preventive Health Measures
+# LEFT BOX: Input + AQI Summary
 # ----------------------------
-st.subheader("💡 Actionable Health Measures")
+st.markdown(f"""
+<div class="overlay-box">
+    <h2>🌍 Air Quality & Health Advisor</h2>
+    <p><b>City:</b> {city}</p>
+    <h3>Current AQI</h3>
+    <p style="font-size: 28px; font-weight: bold;">{emoji} {aqi} — {desc}</p>
+    <hr>
+    <h4>WHO 2021 Comparison</h4>
+""", unsafe_allow_html=True)
+
 if exceeding:
-    st.write(f"**Primary High Pollutant:** {high_pollutant}")
-    for measure in HEALTH_MEASURES.get(high_pollutant, []):
-        st.markdown(f"- {measure}")
+    st.markdown(f"<p style='color:#b03a2e;'><b>⚠️ {high_pollutant}</b> exceeds WHO limits by {exceeding[high_pollutant]}%.</p>", unsafe_allow_html=True)
 else:
-    st.write("Air quality is good. Maintain regular outdoor activities safely!")
+    st.markdown("<p style='color:green;'>✅ All pollutants within WHO safe limits.</p>", unsafe_allow_html=True)
+
+st.markdown("</div>", unsafe_allow_html=True)
 
 # ----------------------------
-# Map Visualization (Streamlit built-in)
+# RIGHT BOX: Health Measures
 # ----------------------------
-st.subheader("🗺️ Location Map")
-st.map(pd.DataFrame({"lat": [latitude], "lon": [longitude]}))
+st.markdown("""
+<div class="overlay-right">
+    <h3>💡 Actionable Health Measures</h3>
+""", unsafe_allow_html=True)
 
-# ----------------------------
-# Display pollutant details
-# ----------------------------
-st.subheader("🧪 Pollutant Breakdown")
+if high_pollutant:
+    st.markdown(f"<b>Primary High Pollutant:</b> {high_pollutant}", unsafe_allow_html=True)
+    for m in HEALTH_MEASURES.get(high_pollutant, []):
+        st.markdown(f"- {m}")
+else:
+    st.markdown("Air quality is good. You can safely continue outdoor activities!")
+
+st.markdown("<hr><h4>🧪 Pollutant Breakdown</h4>", unsafe_allow_html=True)
+
 pollutant_df = pd.DataFrame(
     [{"Pollutant": k, "Concentration": v, "WHO Limit": WHO_LIMITS.get(k, 'N/A')} for k, v in pollutants.items()]
 )
-st.dataframe(pollutant_df)
+st.dataframe(pollutant_df, use_container_width=True)
+
+st.markdown("</div>", unsafe_allow_html=True)

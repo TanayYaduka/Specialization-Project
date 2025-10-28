@@ -1,23 +1,32 @@
-# air_quality_advisor.py
 import streamlit as st
-import pandas as pd
 import requests
-import folium
-from streamlit_folium import st_folium
+import pandas as pd
 
-# ---------------------------
-# CONFIGURATION
-# ---------------------------
-st.set_page_config(page_title="WHO-Grounded Air Quality & Health Advisor", layout="wide")
+# ----------------------------
+# Simulated AQI Fetch Function
+# ----------------------------
+def fetch_aqi_data(latitude, longitude):
+    """
+    Simulates fetching AQI and pollutant data for a given lat/lon.
+    Replace this logic later with your real API integration.
+    """
+    return {
+        "aqi": 132,
+        "lat": latitude,
+        "lon": longitude,
+        "pollutants": {
+            "PM2.5": 65,
+            "PM10": 78,
+            "O3": 85,
+            "NO2": 22,
+            "SO2": 15,
+            "CO": 600
+        },
+    }
 
-# API setup (from your previous examples)
-DATA_GOV_API_KEY = "579b464db66ec23bdd00000146ebd672b8dc438158b221a05b4f40b6"
-INDEX_NAME = "3b01bcb8-0b14-4abf-b6f2-c1bfd384ba69"
-BASE_URL = f"https://api.data.gov.in/resource/{INDEX_NAME}"
-
-OPENAQ_KEY = "55600dab78cfe8e8ecb2ef2c531a869f9aa2a7d7d1d7feb5b1e063daca79ae42"
-
-# WHO guideline limits
+# ----------------------------
+# WHO 2021 Air Quality Limits
+# ----------------------------
 WHO_LIMITS = {
     "PM2.5": 15,
     "PM10": 45,
@@ -26,141 +35,130 @@ WHO_LIMITS = {
     "O3": 100
 }
 
-# Preventive measures mapping
-PREVENTIVE_MEASURES = {
+# ----------------------------
+# Health Measures by Pollutant
+# ----------------------------
+HEALTH_MEASURES = {
     "PM2.5": [
-        "Wear an N95 or P95 mask when outdoors.",
-        "Close windows and run a HEPA air purifier indoors.",
-        "Avoid strenuous outdoor exercise during high pollution hours."
+        "Wear an N95 or P95 mask outdoors.",
+        "Keep windows closed and use HEPA air purifiers indoors.",
+        "Avoid outdoor exercise during peak pollution hours."
     ],
     "PM10": [
-        "Wear an N95 or P95 mask outdoors.",
-        "Avoid dusty areas and use air purifiers indoors.",
-        "Limit outdoor activities during peak traffic hours."
+        "Wear a mask outdoors to reduce inhalation of dust particles.",
+        "Avoid construction-heavy or high-traffic zones.",
+        "Stay indoors if visibility appears poor."
     ],
     "O3": [
-        "Avoid being outdoors during mid-day/afternoon.",
-        "Stay indoors if respiratory symptoms worsen.",
+        "Limit outdoor activities during mid-day or afternoon.",
+        "If respiratory symptoms worsen, stay indoors.",
         "Avoid gas-powered lawn equipment."
     ],
     "NO2": [
-        "Avoid high-traffic roads and industrial zones.",
+        "Avoid high-traffic roads or industrial areas.",
         "Ensure good indoor ventilation without drawing outdoor air.",
-        "Use indoor plants to help absorb NO₂."
+        "Use indoor plants that help absorb nitrogen dioxide."
     ],
     "SO2": [
-        "Avoid areas near construction or industrial emissions.",
-        "Ventilate your home well but avoid pulling polluted air inside.",
-        "Use air purifiers if sensitive to sulfur compounds."
+        "Stay away from industrial or burning zones.",
+        "If you experience throat irritation, stay indoors.",
+        "Avoid outdoor physical exertion during high SO₂ periods."
     ]
 }
 
-# ---------------------------
-# HELPER FUNCTIONS
-# ---------------------------
-def fetch_aqi_data(city):
-    """Fetch AQI data for a city from data.gov.in API."""
-    params = {
-        "api-key": DATA_GOV_API_KEY,
-        "format": "json",
-        "limit": 100
-    }
-    response = requests.get(BASE_URL, params=params)
-    data = response.json()
-    if "records" not in data:
-        return None
-    
-    df = pd.DataFrame(data["records"])
-    df = df[df["city"].str.lower() == city.lower()]
-    if df.empty:
-        return None
+# ----------------------------
+# Streamlit App Layout
+# ----------------------------
+st.set_page_config(page_title="Air Quality and Health Advisor", layout="wide")
+st.title("🌍 Air Quality and Health Advisor")
 
-    df["avg_value"] = pd.to_numeric(df["avg_value"], errors="coerce")
-    df = df.dropna(subset=["avg_value"])
+st.write("Check real-time Air Quality Index (AQI) and health measures based on WHO guidelines.")
 
-    # Calculate overall AQI approximation (simple average of pollutants)
-    pollutants_dict = df.groupby("pollutant_id")["avg_value"].mean().to_dict()
-    aqi = int(df["avg_value"].mean())
+# ----------------------------
+# Location Input
+# ----------------------------
+default_city = "New Delhi"
+city = st.text_input("Enter City Name:", default_city)
 
-    # Dummy coordinates (you could add geocoding here)
-    return {
-        "aqi": aqi,
-        "lat": float(df.iloc[0]["latitude"]),
-        "lon": float(df.iloc[0]["longitude"]),
-        "pollutants": pollutants_dict
-    }
+# Simulate geolocation (you can integrate geopy/geocoding later)
+# Here we use predefined coordinates for simplicity
+geo_data = {
+    "New Delhi": (28.6139, 77.2090),
+    "Mumbai": (19.0760, 72.8777),
+    "Bangalore": (12.9716, 77.5946),
+    "Kolkata": (22.5726, 88.3639),
+    "Chennai": (13.0827, 80.2707)
+}
+latitude, longitude = geo_data.get(city.title(), (28.6139, 77.2090))
 
-def evaluate_pollutants(pollutants):
-    """Compare pollutants to WHO guidelines."""
-    results = []
-    for pollutant, value in pollutants.items():
-        limit = WHO_LIMITS.get(pollutant)
-        if limit:
-            ratio = (value / limit) * 100
-            results.append((pollutant, value, limit, ratio))
-    if not results:
-        return None
-    # Find pollutant with highest exceedance
-    results.sort(key=lambda x: x[3], reverse=True)
-    return results[0]  # (pollutant, value, limit, ratio)
+# ----------------------------
+# Fetch AQI Data
+# ----------------------------
+st.subheader("📡 Fetching AQI Data")
+data = fetch_aqi_data(latitude, longitude)
+aqi = data["aqi"]
+pollutants = data["pollutants"]
 
-def aqi_category(aqi):
-    """Return AQI category name and color."""
+# ----------------------------
+# AQI Level Classification
+# ----------------------------
+def classify_aqi(aqi):
     if aqi <= 50:
-        return "Good", "green"
+        return "Good", "🟢"
     elif aqi <= 100:
-        return "Moderate", "yellow"
+        return "Moderate", "🟡"
     elif aqi <= 150:
-        return "Unhealthy (Sensitive)", "orange"
+        return "Unhealthy for Sensitive Groups", "🟠"
     elif aqi <= 200:
-        return "Unhealthy", "red"
+        return "Unhealthy", "🔴"
     elif aqi <= 300:
-        return "Very Unhealthy", "purple"
+        return "Very Unhealthy", "🟣"
     else:
-        return "Hazardous", "maroon"
+        return "Hazardous", "⚫"
 
-# ---------------------------
-# STREAMLIT UI
-# ---------------------------
-st.title("🌍 WHO-Grounded Air Quality & Health Advisor")
-st.caption("Get real-time air quality insights and WHO-based health measures.")
+desc, emoji = classify_aqi(aqi)
 
-# User input for city
-city = st.text_input("Enter your city name:", "Delhi")
+st.metric(label="Current AQI", value=f"{aqi}", delta=f"{emoji} {desc}")
 
-if st.button("Check Air Quality"):
-    with st.spinner("Fetching real-time air quality data..."):
-        data = fetch_aqi_data(city)
+# ----------------------------
+# WHO Guideline Comparison
+# ----------------------------
+st.subheader("📊 WHO Guideline Comparison")
 
-    if data:
-        aqi = data["aqi"]
-        pollutants = data["pollutants"]
-        cat, color = aqi_category(aqi)
+exceeding = {}
+for pollutant, value in pollutants.items():
+    limit = WHO_LIMITS.get(pollutant)
+    if limit and value > limit:
+        exceeding[pollutant] = round(((value - limit) / limit) * 100, 2)
 
-        st.metric(label=f"🌡️ Overall AQI in {city}", value=aqi, delta=cat)
-        st.write("### Pollutant Breakdown")
-        st.dataframe(pd.DataFrame(list(pollutants.items()), columns=["Pollutant", "Level (μg/m³)"]))
+if exceeding:
+    high_pollutant = max(exceeding, key=exceeding.get)
+    st.warning(f"⚠️ {high_pollutant} levels exceed WHO limits by {exceeding[high_pollutant]}%.")
+else:
+    st.success("✅ All pollutants are within WHO safe limits.")
 
-        # Analyze against WHO limits
-        result = evaluate_pollutants(pollutants)
-        if result:
-            pollutant, value, limit, ratio = result
-            if value > limit:
-                st.warning(
-                    f"⚠️ **{pollutant}** exceeds WHO 24-hour limit ({limit} μg/m³) — currently {value:.1f} μg/m³ "
-                    f"({ratio:.1f}% of limit)"
-                )
-                st.subheader("🩺 Actionable Health Measures")
-                for m in PREVENTIVE_MEASURES.get(pollutant, []):
-                    st.markdown(f"- {m}")
-            else:
-                st.success("✅ Air quality is within WHO guideline limits.")
-        
-        # Map visualization
-        st.subheader("🗺️ Location Map")
-        fmap = folium.Map(location=[data["lat"], data["lon"]], zoom_start=10)
-        folium.Marker([data["lat"], data["lon"]], popup=city, tooltip=f"AQI: {aqi}").add_to(fmap)
-        st_folium(fmap, width=700, height=400)
+# ----------------------------
+# Preventive Health Measures
+# ----------------------------
+st.subheader("💡 Actionable Health Measures")
+if exceeding:
+    st.write(f"**Primary High Pollutant:** {high_pollutant}")
+    for measure in HEALTH_MEASURES.get(high_pollutant, []):
+        st.markdown(f"- {measure}")
+else:
+    st.write("Air quality is good. Maintain regular outdoor activities safely!")
 
-    else:
-        st.error("Could not fetch data for the specified city. Try another city or check the API connection.")
+# ----------------------------
+# Map Visualization (Streamlit built-in)
+# ----------------------------
+st.subheader("🗺️ Location Map")
+st.map(pd.DataFrame({"lat": [latitude], "lon": [longitude]}))
+
+# ----------------------------
+# Display pollutant details
+# ----------------------------
+st.subheader("🧪 Pollutant Breakdown")
+pollutant_df = pd.DataFrame(
+    [{"Pollutant": k, "Concentration": v, "WHO Limit": WHO_LIMITS.get(k, 'N/A')} for k, v in pollutants.items()]
+)
+st.dataframe(pollutant_df)

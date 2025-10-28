@@ -1,171 +1,170 @@
 import streamlit as st
-import folium
-from streamlit_folium import st_folium
 import requests
+import pandas as pd
+from streamlit_folium import st_folium
+import folium
 
-# -------------------
-# CONFIG
-# -------------------
-st.set_page_config(page_title="Live Air Quality Map", layout="wide")
+# -----------------------------
+# CONFIGURATION
+# -----------------------------
+st.set_page_config(page_title="🌍 Air Quality Dashboard", layout="wide")
 
 TOKEN = "8506c7ac77e67d10c3ac8f76550bf8b460cce195"
+BASE_URL = "https://api.waqi.info"
 
-# -------------------
-# HELPER FUNCTIONS
-# -------------------
+# -----------------------------
+# FUNCTION DEFINITIONS
+# -----------------------------
 
-@st.cache_data(ttl=600)
-def get_city_locations(city):
+@st.cache_data
+def get_city_stations(city):
     """Fetch all AQI monitoring stations for a given city."""
-    url = f"https://api.waqi.info/search/?token={TOKEN}&keyword={city}"
-    response = requests.get(url).json()
-    if response["status"] == "ok":
-        stations = response["data"]
-        return [
-            {
-                "uid": s["uid"],
-                "name": s["station"]["name"],
-                "lat": s["station"]["geo"][0],
-                "lon": s["station"]["geo"][1],
-            }
-            for s in stations
-        ]
-    return []
+    url = f"{BASE_URL}/search/?token={TOKEN}&keyword={city}"
+    resp = requests.get(url)
+    data = resp.json()
+    if data["status"] == "ok":
+        stations = []
+        for s in data["data"]:
+            if s.get("station", {}).get("geo"):
+                stations.append({
+                    "name": s["station"]["name"],
+                    "aqi": s["aqi"],
+                    "lat": s["station"]["geo"][0],
+                    "lon": s["station"]["geo"][1],
+                })
+        return pd.DataFrame(stations)
+    return pd.DataFrame()
 
 
-@st.cache_data(ttl=600)
-def get_station_data(uid):
-    """Fetch live AQI and pollutant info for a specific station."""
-    url = f"https://api.waqi.info/feed/@{uid}/?token={TOKEN}"
-    response = requests.get(url).json()
-    if response["status"] == "ok":
-        d = response["data"]
-        return {
-            "city": d["city"]["name"],
-            "aqi": d["aqi"],
-            "pollutants": {k.upper(): v["v"] for k, v in d.get("iaqi", {}).items()},
-            "time": d["time"]["s"],
-            "lat": d["city"]["geo"][0],
-            "lon": d["city"]["geo"][1],
-        }
-    return None
+@st.cache_data
+def get_station_details(city):
+    """Fetch detailed AQI and pollutants for a city."""
+    url = f"{BASE_URL}/feed/{city}/?token={TOKEN}"
+    resp = requests.get(url)
+    data = resp.json()
+    if data["status"] == "ok":
+        aqi = data["data"]["aqi"]
+        pollutants = {k.upper(): v["v"] for k, v in data["data"]["iaqi"].items()}
+        return aqi, pollutants
+    return None, None
 
 
-def get_aqi_color(aqi):
-    """Return AQI category and color."""
+def classify_aqi(aqi):
+    """Return description and color for AQI level."""
+    if aqi is None:
+        return "No Data", "#808080"
     if aqi <= 50:
         return "Good", "#009966"
     elif aqi <= 100:
-        return "Moderate", "#FFDE33"
+        return "Moderate", "#ffde33"
     elif aqi <= 150:
-        return "Unhealthy (SG)", "#FF9933"
+        return "Unhealthy for Sensitive Groups", "#ff9933"
     elif aqi <= 200:
-        return "Unhealthy", "#CC0033"
+        return "Unhealthy", "#cc0033"
     elif aqi <= 300:
         return "Very Unhealthy", "#660099"
     else:
-        return "Hazardous", "#7E0023"
+        return "Hazardous", "#7e0023"
 
 
-# -------------------
-# UI LAYOUT
-# -------------------
-st.markdown(
-    """
+def health_tips(pollutants):
+    """Return simple health measures."""
+    tips = []
+    if not pollutants:
+        return ["No data available."]
+    if "PM2.5" in pollutants and pollutants["PM2.5"] > 15:
+        tips.append("Wear an N95 mask outdoors.")
+        tips.append("Keep windows closed and use air purifiers.")
+    if "O3" in pollutants and pollutants["O3"] > 100:
+        tips.append("Avoid outdoor activity in afternoon.")
+    if "NO2" in pollutants and pollutants["NO2"] > 25:
+        tips.append("Stay away from high-traffic zones.")
+    if not tips:
+        tips.append("Air quality is healthy. Enjoy your day!")
+    return tips
+
+
+# -----------------------------
+# PAGE STYLING
+# -----------------------------
+st.markdown("""
     <style>
-        [data-testid="stSidebar"] {display: none;}
-        div.stApp {
-            background-color: #000;
-        }
-        .overlay-box {
-            position: absolute;
-            background: rgba(0, 0, 0, 0.6);
-            padding: 20px;
-            border-radius: 15px;
-            color: white;
-            z-index: 999;
-            font-family: 'Arial', sans-serif;
-        }
-        #city-box {
-            top: 20px;
-            right: 20px;
-            width: 280px;
-        }
-        #info-box {
-            top: 20px;
-            left: 20px;
-            width: 280px;
-        }
+    .stApp {
+        background-color: #000;
+    }
+    .translucent-box {
+        background: rgba(0, 0, 0, 0.65);
+        backdrop-filter: blur(10px);
+        border-radius: 15px;
+        padding: 20px;
+        color: white;
+        position: absolute;
+        z-index: 9999;
+    }
+    #left-box {
+        top: 30px;
+        left: 30px;
+        width: 320px;
+    }
+    #right-box {
+        top: 30px;
+        right: 30px;
+        width: 350px;
+    }
     </style>
-    """,
-    unsafe_allow_html=True,
-)
+""", unsafe_allow_html=True)
 
-# Initialize state
-if "selected_city" not in st.session_state:
-    st.session_state.selected_city = None
-if "stations" not in st.session_state:
-    st.session_state.stations = []
-if "selected_station" not in st.session_state:
-    st.session_state.selected_station = None
+# -----------------------------
+# CITY SELECTION BOX
+# -----------------------------
+cities = ["Delhi", "Mumbai", "Bangalore", "Kolkata", "Chennai", "Hyderabad", "Pune", "Ahmedabad", "Nagpur"]
 
-# -------------------
-# UI BOX 1: City Selection
-# -------------------
-with st.container():
-    st.markdown('<div class="overlay-box" id="city-box">', unsafe_allow_html=True)
-    st.subheader("🌆 Select City")
-    city = st.text_input("Enter city name", "Delhi")
-    if st.button("Fetch Locations"):
-        st.session_state.selected_city = city
-        st.session_state.stations = get_city_locations(city)
-        if not st.session_state.stations:
-            st.warning("No monitoring stations found for this city.")
-        else:
-            st.success(f"Found {len(st.session_state.stations)} locations in {city}.")
+st.markdown('<div class="translucent-box" id="left-box">', unsafe_allow_html=True)
+st.header("🏙️ City Selection")
 
-    if st.session_state.stations:
-        location_names = [s["name"] for s in st.session_state.stations]
-        selected_location = st.selectbox("Select a monitoring station", location_names)
-        st.session_state.selected_station = next(
-            (s for s in st.session_state.stations if s["name"] == selected_location), None
-        )
-    st.markdown("</div>", unsafe_allow_html=True)
+city = st.selectbox("Choose a City:", cities, index=0)
 
-# -------------------
-# AQI MAP
-# -------------------
-if st.session_state.selected_station:
-    data = get_station_data(st.session_state.selected_station["uid"])
+st.markdown('</div>', unsafe_allow_html=True)
 
-    if data:
-        category, color = get_aqi_color(data["aqi"])
+# -----------------------------
+# AQI FETCHING & MAP DISPLAY
+# -----------------------------
+df = get_city_stations(city)
+if df.empty:
+    st.error("No AQI data found for this city.")
+else:
+    city_aqi, pollutants = get_station_details(city)
+    desc, color = classify_aqi(city_aqi)
 
-        # Map
-        m = folium.Map(location=[data["lat"], data["lon"]], zoom_start=11)
+    # Map
+    m = folium.Map(location=[df["lat"].mean(), df["lon"].mean()], zoom_start=11, tiles="CartoDB dark_matter")
+    for _, row in df.iterrows():
         folium.CircleMarker(
-            location=[data["lat"], data["lon"]],
-            radius=15,
-            color=color,
+            location=[row["lat"], row["lon"]],
+            radius=8,
+            color="white",
             fill=True,
-            fill_opacity=0.9,
-            popup=f"{data['city']} (AQI: {data['aqi']})",
+            fill_color=classify_aqi(row["aqi"])[1],
+            popup=f"<b>{row['name']}</b><br>AQI: {row['aqi']}",
         ).add_to(m)
 
-        st_data = st_folium(m, width=1400, height=700)
+    map_output = st_folium(m, width=1500, height=750)
 
-        # Info box overlay
-        st.markdown(
-            f"""
-            <div class="overlay-box" id="info-box">
-                <h3>{data['city']}</h3>
-                <h1 style="color:{color};">{data['aqi']}</h1>
-                <h4>{category}</h4>
-                <p><b>Last Updated:</b> {data['time']}</p>
-                <hr>
-                <b>Pollutants:</b><br>
-                {', '.join([f"{k}: {v}" for k, v in data['pollutants'].items()])}
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+    # -----------------------------
+    # AQI DETAILS BOX
+    # -----------------------------
+    st.markdown('<div class="translucent-box" id="right-box">', unsafe_allow_html=True)
+    st.header(f"🌡️ AQI Details - {city}")
+    st.markdown(f"<h3 style='color:{color};'>AQI: {city_aqi} ({desc})</h3>", unsafe_allow_html=True)
+
+    if pollutants:
+        st.write("**Pollutant Concentrations:**")
+        st.dataframe(pd.DataFrame(list(pollutants.items()), columns=["Pollutant", "Value"]))
+
+        st.write("**Health Recommendations:**")
+        for tip in health_tips(pollutants):
+            st.markdown(f"- {tip}")
+    else:
+        st.write("No pollutant details available.")
+
+    st.markdown('</div>', unsafe_allow_html=True)

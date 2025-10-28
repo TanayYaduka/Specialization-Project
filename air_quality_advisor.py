@@ -3,17 +3,14 @@ import folium
 from streamlit_folium import st_folium
 import requests
 
-# --- Streamlit Page Config ---
 st.set_page_config(page_title="Air Quality Advisor", layout="wide")
-
 st.title("🌍 Air Quality Advisor")
 
 TOKEN = "8506c7ac77e67d10c3ac8f76550bf8b460cce195"
 
-# --- User Input for City ---
 city = st.text_input("Enter a City Name", "Delhi")
 
-# --- Advisory Dictionary ---
+# Advisory dictionary
 def get_advisory(pollutant):
     advisory = {
         "pm25": "Avoid outdoor activity; use an air purifier indoors.",
@@ -25,79 +22,58 @@ def get_advisory(pollutant):
     }
     return advisory.get(pollutant.lower(), "Maintain general air quality precautions.")
 
-# --- Get city coordinates dynamically ---
-def get_city_coords(city_name):
-    try:
-        url = f"https://nominatim.openstreetmap.org/search?q={city_name},India&format=json&limit=1"
-        resp = requests.get(url, headers={"User-Agent": "AQI-Streamlit-App"})
-        data = resp.json()
-        if data:
-            lat, lon = float(data[0]["lat"]), float(data[0]["lon"])
-            return lat, lon
-    except Exception as e:
-        st.error(f"Error fetching coordinates: {e}")
-    return None, None
-
-# --- Fetch all AQI stations within city bounds ---
-def get_aqi_stations(lat, lon):
-    lat_min, lat_max = lat - 0.3, lat + 0.3
-    lon_min, lon_max = lon - 0.3, lon + 0.3
-
-    url = f"https://api.waqi.info/map/bounds/?token={TOKEN}&latlng={lat_min},{lon_min},{lat_max},{lon_max}"
+# Fetch city feed directly from WAQI
+def get_city_data(city_name):
+    url = f"https://api.waqi.info/feed/{city_name}/?token={TOKEN}"
     try:
         resp = requests.get(url)
         data = resp.json()
-        if data["status"] == "ok" and data["data"]:
-            stations = []
-            for item in data["data"]:
-                stations.append({
-                    "location": item.get("station", "Unknown Station"),
-                    "lat": item.get("lat"),
-                    "lon": item.get("lon"),
-                    "aqi": item.get("aqi"),
-                    "dominant_pollutant": item.get("dominentpol", "Unknown")
-                })
-            return stations
+        if data["status"] == "ok":
+            city_data = data["data"]
+            lat, lon = city_data["city"]["geo"]
+            dominant = city_data.get("dominentpol", "pm25")
+            aqi = city_data["aqi"]
+            pollutants = city_data.get("iaqi", {})
+            return {
+                "lat": lat,
+                "lon": lon,
+                "aqi": aqi,
+                "dominant": dominant,
+                "pollutants": pollutants
+            }
     except Exception as e:
-        st.warning(f"Failed to fetch AQI data: {e}")
-    return []
+        st.error(f"Error fetching AQI data: {e}")
+    return None
 
-# --- Main Execution ---
 if city:
-    lat, lon = get_city_coords(city)
-    if lat and lon:
-        stations = get_aqi_stations(lat, lon)
+    city_data = get_city_data(city)
+    if city_data:
+        m = folium.Map(location=[city_data["lat"], city_data["lon"]], zoom_start=11, tiles="CartoDB dark_matter")
 
-        if stations:
-            m = folium.Map(location=[lat, lon], zoom_start=11, tiles="CartoDB dark_matter")
+        # Main city marker
+        popup_text = f"<b>{city}</b><br>"
+        popup_text += f"AQI: <b>{city_data['aqi']}</b><br>"
+        popup_text += f"Dominant Pollutant: {city_data['dominant'].upper()}<br><br>"
+        for p, val in city_data["pollutants"].items():
+            if isinstance(val, dict) and 'v' in val:
+                val = val['v']
+            popup_text += f"{p.upper()}: {val}<br>"
+        popup_text += f"<br><b>Health Advisory:</b><br>{get_advisory(city_data['dominant'])}"
 
-            for s in stations:
-                aqi = s["aqi"]
-                dominant = s["dominant_pollutant"]
+        color = "#00FFAA" if int(city_data["aqi"]) < 100 else "#FF5555"
 
-                popup_html = f"""
-                <b>{s['location']}</b><br>
-                AQI: <b>{aqi}</b><br>
-                Dominant Pollutant: <b>{dominant.upper()}</b><br>
-                Advisory: {get_advisory(dominant)}
-                """
+        folium.CircleMarker(
+            location=[city_data["lat"], city_data["lon"]],
+            radius=12,
+            color=color,
+            fill=True,
+            fill_color=color,
+            fill_opacity=0.8,
+            popup=folium.Popup(popup_text, max_width=300)
+        ).add_to(m)
 
-                color = "#00FFAA" if str(aqi).isdigit() and int(aqi) < 100 else "#FF5555"
-
-                folium.CircleMarker(
-                    location=[s["lat"], s["lon"]],
-                    radius=8,
-                    color=color,
-                    fill=True,
-                    fill_color=color,
-                    fill_opacity=0.8,
-                    popup=folium.Popup(popup_html, max_width=300)
-                ).add_to(m)
-
-            st_folium(m, height=700, width=1300)
-        else:
-            st.warning(f"No AQI monitoring stations found for {city}.")
+        st_folium(m, height=700, width=1300)
     else:
-        st.warning("Could not find the city’s coordinates. Please check the city name.")
+        st.warning("Could not fetch AQI data for this city.")
 else:
-    st.info("Please enter a city to view its air quality.")
+    st.info("Enter a city name to view AQI.")

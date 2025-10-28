@@ -203,29 +203,67 @@ m = folium.Map(location=[mean_lat, mean_lon], zoom_start=11, tiles="CartoDB posi
 # Add marker cluster for cleanliness
 marker_cluster = MarkerCluster().add_to(m)
 
+# -----------------------------
+# Enhanced map markers with preventive measures
+# -----------------------------
+
+def preventive_measures(aqi_label: str, dominant_pollutant: str) -> str:
+    """Return preventive advice based on AQI label and dominant pollutant."""
+    advice = {
+        "Good": "Air quality is good. Enjoy your day outdoors! 🌿",
+        "Moderate": "Air quality is acceptable, but sensitive individuals should avoid prolonged outdoor activity.",
+        "Unhealthy (SG)": "Limit outdoor exertion, especially for children and elderly. Consider using an N95 mask if sensitive.",
+        "Unhealthy": "Avoid outdoor exercise. Use masks and air purifiers indoors. Keep windows closed.",
+        "Very Unhealthy": "Health alert: Everyone may experience effects. Stay indoors, avoid travel.",
+        "Hazardous": "Serious health risk: Stay indoors. Use HEPA purifiers, seal windows, and avoid all outdoor exposure.",
+        "No data": "Air quality info unavailable."
+    }
+
+    pollutant_tips = {
+        "PM2.5": "Fine particles can enter lungs easily — use N95 masks outdoors and air purifiers indoors.",
+        "PM10": "Coarse dust particles — avoid open roads, wear protective eyewear, and mask up.",
+        "NO2": "Nitrogen dioxide irritates airways — avoid heavy traffic areas.",
+        "SO2": "Sulfur dioxide may cause breathing difficulty — avoid industrial areas.",
+        "CO": "Carbon monoxide affects oxygen intake — ensure good ventilation indoors.",
+        "O3": "Ozone exposure causes throat irritation — avoid outdoor activities during peak sunlight.",
+    }
+
+    base_advice = advice.get(aqi_label, "Monitor conditions closely.")
+    pol_advice = pollutant_tips.get(dominant_pollutant, "")
+    return f"{base_advice}<br><b>{dominant_pollutant} tip:</b> {pol_advice}"
+
 for rec in detailed_list:
     label, color = classify_aqi(rec.get("aqi"))
+    
+    # Find dominant pollutant if any
+    dominant_pollutant = None
+    if rec.get("pollutants"):
+        dominant_pollutant = max(rec["pollutants"], key=rec["pollutants"].get)
+    
+    # Preventive measures message
+    prevention_msg = preventive_measures(label, dominant_pollutant or "General")
+
     popup_lines = [f"<b>{rec['name']}</b>"]
-    popup_lines.append(f"AQI: {rec.get('aqi')} — {label}")
+    popup_lines.append(f"AQI: {rec.get('aqi')} — <b>{label}</b>")
     if rec.get("time"):
         popup_lines.append(f"Last update: {rec.get('time')}")
-    # Show pollutants if any
     if rec.get("pollutants"):
         popup_lines.append("<br><b>Pollutants:</b>")
         for p, v in rec["pollutants"].items():
             popup_lines.append(f"{p}: {v}")
-    else:
-        popup_lines.append("<i>No pollutant details available</i>")
-
+    popup_lines.append("<hr>")
+    popup_lines.append(f"<b>Preventive Measures:</b><br>{prevention_msg}")
+    
     popup_html = "<br>".join(popup_lines)
+    
     folium.CircleMarker(
         location=[rec["lat"], rec["lon"]],
-        radius=8,
+        radius=9,
         color="white",
         fill=True,
         fill_color=color,
         fill_opacity=0.9,
-        popup=folium.Popup(popup_html, max_width=300),
+        popup=folium.Popup(popup_html, max_width=320),
     ).add_to(marker_cluster)
 
 # -----------------------------

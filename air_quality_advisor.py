@@ -7,58 +7,78 @@ st.set_page_config(page_title="🌍 Air Quality Advisor", layout="wide")
 st.title("🌍 Air Quality Advisor")
 
 # --- Dropdown for City ---
-city = st.selectbox("Select a City", ["Delhi", "Mumbai", "Chennai", "Kolkata", "Bengaluru", "Hyderabad"])
+city = st.selectbox(
+    "Select a City",
+    ["Delhi", "Mumbai", "Chennai", "Kolkata", "Bengaluru", "Hyderabad"]
+)
 
-# --- Fetch coordinates dynamically ---
+# --- Known coordinates fallback (approx city centers) ---
+CITY_COORDS = {
+    "Delhi": (28.6139, 77.2090),
+    "Mumbai": (19.0760, 72.8777),
+    "Chennai": (13.0827, 80.2707),
+    "Kolkata": (22.5726, 88.3639),
+    "Bengaluru": (12.9716, 77.5946),
+    "Hyderabad": (17.3850, 78.4867)
+}
+
+# --- Try to fetch coordinates dynamically ---
 def get_city_coords(city):
     try:
         url = f"https://nominatim.openstreetmap.org/search?q={city},India&format=json&limit=1"
-        resp = requests.get(url, headers={"User-Agent": "Streamlit AQI App"})
+        resp = requests.get(url, headers={"User-Agent": "Streamlit AQI App"}, timeout=10)
         data = resp.json()
         if len(data) > 0:
-            lat = float(data[0]["lat"])
-            lon = float(data[0]["lon"])
-            return lat, lon
+            return float(data[0]["lat"]), float(data[0]["lon"])
     except Exception as e:
-        st.error(f"Error fetching coordinates: {e}")
-    return None, None
+        st.warning(f"⚠️ Error fetching coordinates for {city}: {e}")
+    # fallback to predefined coordinates
+    st.info(f"Using fallback coordinates for {city}.")
+    return CITY_COORDS[city]
 
-# --- Fetch AQI data for multiple stations ---
+# --- Fetch multiple AQI stations from WAQI ---
 def get_aqi_stations(city):
     lat, lon = get_city_coords(city)
     if not lat or not lon:
-        st.warning("Could not find the city’s coordinates. Please check the city name.")
+        st.error("Could not find city coordinates.")
         return []
 
-    # Create a bounding box around the city (approx. 0.5° radius)
-    min_lat, max_lat = lat - 0.25, lat + 0.25
-    min_lon, max_lon = lon - 0.25, lon + 0.25
+    # Define a bounding box around city (approx 0.4° range)
+    min_lat, max_lat = lat - 0.2, lat + 0.2
+    min_lon, max_lon = lon - 0.2, lon + 0.2
     api_url = f"https://api.waqi.info/map/bounds/?token=YOUR_API_KEY&latlng={min_lat},{min_lon},{max_lat},{max_lon}"
 
     try:
-        resp = requests.get(api_url)
+        resp = requests.get(api_url, timeout=10)
         data = resp.json()
-        if data.get("status") == "ok" and "data" in data:
-            return data["data"]  # list of stations
+        if data.get("status") == "ok":
+            return data.get("data", [])
         else:
-            st.warning("No data available for this city region.")
+            st.warning("⚠️ No AQI data available for this area.")
     except Exception as e:
-        st.warning(f"Failed to fetch data for {city}: {e}")
+        st.warning(f"Failed to fetch AQI data for {city}: {e}")
     return []
 
-# --- Preventive health measures ---
-def get_advisory(pollutant):
-    advisory = {
-        "pm25": "Avoid outdoor activity; use air purifier indoors.",
-        "pm10": "Wear a mask outdoors; limit physical exertion.",
-        "no2": "Avoid busy roads; keep windows closed.",
-        "so2": "Stay indoors if you have asthma or lung disease.",
-        "co": "Ensure good ventilation; avoid using gas stoves for long periods.",
-        "o3": "Avoid outdoor activities during afternoon hours."
-    }
-    return advisory.get(pollutant.lower(), "Maintain general air quality precautions.")
+# --- Health advisory helper ---
+def get_advisory(aqi):
+    try:
+        aqi = int(aqi)
+    except:
+        return "Maintain general air quality precautions."
+    if aqi <= 50:
+        return "Good – air quality is satisfactory."
+    elif aqi <= 100:
+        return "Moderate – acceptable, but some pollutants may be concerning."
+    elif aqi <= 150:
+        return "Unhealthy for sensitive groups – limit outdoor activity."
+    elif aqi <= 200:
+        return "Unhealthy – everyone should reduce outdoor exertion."
+    elif aqi <= 300:
+        return "Very Unhealthy – avoid outdoor activities."
+    else:
+        return "Hazardous – stay indoors and use air purifiers."
 
-# --- Main map logic ---
+# --- Build Map ---
 stations = get_aqi_stations(city)
 
 if stations:
@@ -69,8 +89,19 @@ if stations:
         aqi = s.get("aqi", "N/A")
         lat, lon = s["lat"], s["lon"]
 
-        popup_text = f"<b>{name}</b><br>AQI: {aqi}<br><b>Advisory:</b> {get_advisory('pm25')}"
-        color = "#00e400" if isinstance(aqi, int) and aqi <= 50 else "#ff0000"
+        popup_text = f"<b>{name}</b><br>AQI: {aqi}<br><b>Advisory:</b> {get_advisory(aqi)}"
+        try:
+            aqi_val = int(aqi)
+            color = (
+                "#00e400" if aqi_val <= 50 else
+                "#ffff00" if aqi_val <= 100 else
+                "#ff7e00" if aqi_val <= 150 else
+                "#ff0000" if aqi_val <= 200 else
+                "#8f3f97" if aqi_val <= 300 else
+                "#7e0023"
+            )
+        except:
+            color = "#888888"
 
         folium.CircleMarker(
             location=[lat, lon],
